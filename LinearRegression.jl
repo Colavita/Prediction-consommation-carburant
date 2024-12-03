@@ -102,8 +102,10 @@ valid = remove_outliers_by_iqr(valid, :cylindree, :consommation)
 # valid.type = replace(valid.type, "break_petit" => "voiture_minicompacte")
 # test.type = replace(test.type, "break_petit" => "voiture_minicompacte")
 
-
-
+# if transmission is 4x4, change for integrale
+train.transmission = ifelse.(train.transmission .== "4x4", "integrale", train.transmission)
+valid.transmission = ifelse.(valid.transmission .== "4x4", "integrale", valid.transmission)
+test.transmission = ifelse.(test.transmission .== "4x4", "integrale", test.transmission)
 
 # Define categorical columns
 categorical_cols = [:type, :transmission]
@@ -118,6 +120,7 @@ train = one_hot_encode(train, categorical_cols, levels_dict)
 valid = one_hot_encode(valid, categorical_cols, levels_dict)
 test = one_hot_encode(test, categorical_cols, levels_dict)
 
+
 # Define the target variable
 target = :consommation
 
@@ -129,7 +132,9 @@ y_valid = valid[!, target]
 X_test = Matrix(test)
 
 # Define the model
-model = lm(@formula(consommation ~ age + transmission_4x4+ transmission_integrale + transmission_propulsion + transmission_traction + boite + cylindree), train)
+# model = lm(@formula(consommation ~ age + transmission_4x4+ transmission_integrale + transmission_propulsion + transmission_traction + boite + cylindree), train)
+model = lm(@formula(consommation ~ age + transmission_integrale + transmission_propulsion + transmission_traction + boite + cylindree), train) #Meilleur
+# model = lm(@formula(consommation ~ age +  transmission_integrale + transmission_4x4 + transmission_traction + boite + cylindree), train)
 
 #cross validation
 data_k_folds = vcat(train, valid)
@@ -137,7 +142,7 @@ y = data_k_folds.consommation
 X = select(data_k_folds, Not(:consommation))
 
 n = nrow(data_k_folds)
-k = 5  
+k = 5
 fold_size = n ÷ k
 
 indices = randperm(n)
@@ -153,7 +158,7 @@ for i in 0:(k-1)
     X_valid = X[valid_indices, :]
     y_valid = y[valid_indices]
     
-    model = lm(@formula(consommation ~ age + transmission_4x4+ transmission_integrale + transmission_propulsion + transmission_traction + boite + cylindree), train)
+model = lm(@formula(consommation ~ age + transmission_integrale + transmission_propulsion + transmission_traction + boite + cylindree), train) #Meilleur
     
     ŷ_valid = GLM.predict(model, X_valid)
     rms = sqrt(mean((ŷ_valid .- y_valid).^2))
@@ -162,9 +167,6 @@ end
 
 moyenne_rmse = mean(rms_scores)
 println("Moyenne RMSE k-fold : $moyenne_rmse")
-
-
-
 
 # Make predictions
 ŷ_train = GLM.predict(model, train)

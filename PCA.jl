@@ -111,6 +111,10 @@ end
 train = remove_outliers_by_iqr(train, :cylindree, :consommation)
 valid = remove_outliers_by_iqr(valid, :cylindree, :consommation)
 
+train.transmission = ifelse.(train.transmission .== "propulsion", "integrale", train.transmission)
+valid.transmission = ifelse.(valid.transmission .== "propulsion", "integrale", valid.transmission)
+test.transmission = ifelse.(test.transmission .== "propulsion", "integrale", test.transmission)
+
 train = one_hot_encode(train, categorical_cols, levels_dict)
 valid = one_hot_encode(valid, categorical_cols, levels_dict)
 test = one_hot_encode(test, categorical_cols, levels_dict)
@@ -150,6 +154,38 @@ valid_prediction_with_pca = predict(model_with_pca, valid)
 # Calculate RMSE
 rmse_with_pca = sqrt(mean((valid_prediction_with_pca - valid.consommation).^2))
 println("RMSE with PCA: ", rmse_with_pca)
+
+#k fold cross validation
+data_k_folds = vcat(train, valid)
+y = data_k_folds.consommation
+X = select(data_k_folds, Not(:consommation))
+
+n = nrow(data_k_folds)
+k = 5
+fold_size = n ÷ k
+
+indices = randperm(n)
+
+rms_scores = []
+
+for i in 0:(k-1)
+    valid_indices = (i * fold_size + 1):((i + 1) * fold_size)
+    train_indices = setdiff(1:n, valid_indices)
+    
+    X_train = X[train_indices, :]
+    y_train = y[train_indices]
+    X_valid = X[valid_indices, :]
+    y_valid = y[valid_indices]
+    
+    model = lm(@formula(consommation ~ PC1 + PC2 + PC3 + PC4 + PC5), train)
+    
+    ŷ_valid = GLM.predict(model, X_valid)
+    rms = sqrt(mean((ŷ_valid .- y_valid).^2))
+    push!(rms_scores, rms)
+end
+
+moyenne_rmse = mean(rms_scores)
+println("Moyenne RMSE k-fold : $moyenne_rmse")
 
 # Prepare submission DataFrame
 
