@@ -78,14 +78,33 @@ for df in [train, valid, test]
     dropmissing!(df)
 end
 
+#drop boite colonnes
+train = select!(train, Not(:boite))
+valid = select!(valid, Not(:boite))
+test = select!(test, Not(:boite))
+
 # Define categorical columns
-categorical_cols = [:type, :transmission, :boite]
+categorical_cols = [:type, :transmission]
 
 # Collect unique levels from the training set
 levels_dict = Dict()
 for col in categorical_cols
     levels_dict[col] = unique(train[!, col])
 end
+
+function remove_outliers_by_iqr(df, group_col, value_col)
+    return combine(groupby(df, group_col)) do sdf
+        q1 = quantile(sdf[!, value_col], 0.25)
+        q3 = quantile(sdf[!, value_col], 0.75)
+        iqr = q3 - q1
+        lower_bound = q1 - 1.5 * iqr
+        upper_bound = q3 + 1.5 * iqr
+        filter(row -> lower_bound ≤ row[value_col] ≤ upper_bound, sdf)
+    end
+end
+#Remove outliers in the training set
+train = remove_outliers_by_iqr(train, :cylindree, :consommation)
+valid = remove_outliers_by_iqr(valid, :cylindree, :consommation)
 
 train = one_hot_encode(train, categorical_cols, levels_dict)
 valid = one_hot_encode(valid, categorical_cols, levels_dict)
@@ -97,28 +116,9 @@ y_valid = valid.consommation
 X_valid = select(valid, Not(:consommation))
 X_test = deepcopy(test)
 
-
-# Identify numeric feature indices
-feature_names = names(train)
-numeric_features = [ :cylindree, :nombre_cylindres, :age]
-numeric_indices = findall(x -> x in numeric_features, feature_names)
-
-means = mean(Matrix(X_train[:, numeric_features]), dims=1)
-stds = std(Matrix(X_train[:, numeric_features]), dims=1)
-
-function standardizer(X, means, stds)
-    X = deepcopy(X)
-    for j in 1:size(X, 2)
-        if j in numeric_indices
-            X[:, j] = (X[:, j] .- means[j]) ./ stds[j]
-        end
-    end
-    return X
-end
-
-X_train = standardizer(Matrix(X_train), means, stds)
-X_valid = standardizer(Matrix(X_valid), means, stds)
-X_test = standardizer(Matrix(X_test), means, stds)
+X_train = Matrix(select(train, Not(:consommation)))
+X_valid = Matrix(select(valid, Not(:consommation)))
+X_test = Matrix(test)
 
 y_train = Vector(y_train)
 y_valid = Vector(y_valid)
@@ -127,11 +127,13 @@ y_valid = Vector(y_valid)
 pca_model = fit(PCA, X_train'; maxoutdim=5)
 Z_train = MultivariateStats.transform(pca_model, X_train')'
 Z_valid = MultivariateStats.transform(pca_model, X_valid')'
+Z_test = MultivariateStats.transform(pca_model, X_test')'
 
 # Add principal components to DataFrames (train and valid)
 for i in 1:size(Z_train, 2)
     train[:, "PC$(i)"] = Z_train[:, i]
     valid[:, "PC$(i)"] = Z_valid[:, i]
+    test[:, "PC$(i)"] = Z_test[:, i]
 end
 
 # Fit a regression model using PCA
@@ -144,3 +146,17 @@ valid_prediction_with_pca = predict(model_with_pca, valid)
 rmse_with_pca = sqrt(mean((valid_prediction_with_pca - valid.consommation).^2))
 println("RMSE with PCA: ", rmse_with_pca)
 
+# Prepare submission DataFrame
+
+# Make predictions on the test set
+ŷ_test = GLM.predict(model_with_pca, test)
+
+#  Prepare submission DataFrame
+n_test = size(ŷ_test, 1)
+id = 1:n_test
+df_pred = DataFrame(id=id, consommation=ŷ_test)
+
+# Save the predictions to a CSV file
+name = string(rmse_with_pca) * ".csv"
+CSV.write("./submissions/pca/" * name, df_pred)
+println("Predictions exported successfully to " * name * ".")

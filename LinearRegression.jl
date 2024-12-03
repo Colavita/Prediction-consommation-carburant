@@ -33,14 +33,14 @@ function one_hot_encode(df, cols, levels_dict)
     return df
 end
 
-## convert annee column into age
-train.age = 2024 .- train.annee
-valid.age = 2024 .- valid.annee
-test.age = 2024 .- test.annee
+# ## convert annee column into age
+# train.age = 2024 .- train.annee
+# valid.age = 2024 .- valid.annee
+# test.age = 2024 .- test.annee
 
-train = select!(train, Not(:annee))
-valid = select!(valid, Not(:annee))
-test = select!(test, Not(:annee))
+# train = select!(train, Not(:annee))
+# valid = select!(valid, Not(:annee))
+# test = select!(test, Not(:annee))
 
 ## drop missing values
 train = dropmissing(train)
@@ -78,8 +78,21 @@ for df in [train, valid, test]
     dropmissing!(df)
 end
 
+# 1 if boite is automatique, 0 if manuelle
+train.boite = replace(train.boite, "automatique" => 1)
+train.boite = replace(train.boite, "manuelle" => 0)
+valid.boite = replace(valid.boite, "automatique" => 1)
+valid.boite = replace(valid.boite, "manuelle" => 0)
+test.boite = replace(test.boite, "automatique" => 1)
+test.boite  = replace(test.boite, "manuelle" => 0)
+
+# change type break_petit to voiture_minicompacte
+train.type = replace(train.type, "break_petit" => "voiture_minicompacte")
+valid.type = replace(valid.type, "break_petit" => "voiture_minicompacte")
+test.type = replace(test.type, "break_petit" => "voiture_minicompacte")
+
 # Define categorical columns
-categorical_cols = [:type, :transmission, :boite]
+categorical_cols = [:type, :transmission]
 
 # Collect unique levels from the training set
 levels_dict = Dict()
@@ -102,7 +115,7 @@ y_valid = valid[!, target]
 X_test = Matrix(test)
 
 # Define the model
-model = lm(@formula(consommation ~ age + transmission_integrale + transmission_propulsion + transmission_traction + transmission_4x4 + cylindree), train)
+model = lm(@formula(consommation ~ annee + boite + cylindree), train)
 
 # Make predictions
 ŷ_train = GLM.predict(model, train)
@@ -115,3 +128,15 @@ rmse_valid = sqrt(mean((ŷ_valid .- valid.consommation).^2))
 println("RMSE on the training set: $rmse_train")
 println("RMSE on the validation set: $rmse_valid")
 
+# Make predictions on the test set
+ŷ_test = GLM.predict(model, test)
+
+#  Prepare submission DataFrame
+n_test = size(ŷ_test, 1)
+id = 1:n_test
+df_pred = DataFrame(id=id, consommation=ŷ_test)
+
+# Save the predictions to a CSV file
+name = string(rmse_valid) * ".csv"
+CSV.write("./submissions/linear/" * name, df_pred)
+println("Predictions exported successfully to " * name * ".")
