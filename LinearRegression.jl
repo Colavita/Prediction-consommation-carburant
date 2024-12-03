@@ -115,7 +115,7 @@ y_valid = valid[!, target]
 X_test = Matrix(test)
 
 # Define the model
-model = lm(@formula(consommation ~ annee + boite + cylindree), train)
+model = lm(@formula(consommation ~ annee +  + cylindree), train)
 
 # Make predictions
 ŷ_train = GLM.predict(model, train)
