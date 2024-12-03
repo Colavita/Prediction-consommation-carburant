@@ -78,13 +78,18 @@ for df in [train, valid, test]
     dropmissing!(df)
 end
 
-#drop boite colonnes
-train = select!(train, Not(:boite))
-valid = select!(valid, Not(:boite))
-test = select!(test, Not(:boite))
+# Encode 'boite' column in all datasets
+for df in [train, valid, test]
+    df.boite = ifelse.(df.boite .== "automatique", 1.0, 0.0)
+end
+
+#drop type
+train = select!(train, Not(:type))
+valid = select!(valid, Not(:type))
+test = select!(test, Not(:type))
 
 # Define categorical columns
-categorical_cols = [:type, :transmission]
+categorical_cols = [ :transmission]
 
 # Collect unique levels from the training set
 levels_dict = Dict()

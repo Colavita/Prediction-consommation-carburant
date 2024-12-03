@@ -33,14 +33,14 @@ function one_hot_encode(df, cols, levels_dict)
     return df
 end
 
-# ## convert annee column into age
-# train.age = 2024 .- train.annee
-# valid.age = 2024 .- valid.annee
-# test.age = 2024 .- test.annee
+## convert annee column into age
+train.age = 2024 .- train.annee
+valid.age = 2024 .- valid.annee
+test.age = 2024 .- test.annee
 
-# train = select!(train, Not(:annee))
-# valid = select!(valid, Not(:annee))
-# test = select!(test, Not(:annee))
+train = select!(train, Not(:annee))
+valid = select!(valid, Not(:annee))
+test = select!(test, Not(:annee))
 
 ## drop missing values
 train = dropmissing(train)
@@ -78,18 +78,32 @@ for df in [train, valid, test]
     dropmissing!(df)
 end
 
-# 1 if boite is automatique, 0 if manuelle
-train.boite = replace(train.boite, "automatique" => 1)
-train.boite = replace(train.boite, "manuelle" => 0)
-valid.boite = replace(valid.boite, "automatique" => 1)
-valid.boite = replace(valid.boite, "manuelle" => 0)
-test.boite = replace(test.boite, "automatique" => 1)
-test.boite  = replace(test.boite, "manuelle" => 0)
+# Encode 'boite' column in all datasets
+for df in [train, valid, test]
+    df.boite = ifelse.(df.boite .== "automatique", 1.0, 0.0)
+end
 
-# change type break_petit to voiture_minicompacte
-train.type = replace(train.type, "break_petit" => "voiture_minicompacte")
-valid.type = replace(valid.type, "break_petit" => "voiture_minicompacte")
-test.type = replace(test.type, "break_petit" => "voiture_minicompacte")
+function remove_outliers_by_iqr(df, group_col, value_col)
+    return combine(groupby(df, group_col)) do sdf
+        q1 = quantile(sdf[!, value_col], 0.25)
+        q3 = quantile(sdf[!, value_col], 0.75)
+        iqr = q3 - q1
+        lower_bound = q1 - 1.5 * iqr
+        upper_bound = q3 + 1.5 * iqr
+        filter(row -> lower_bound ≤ row[value_col] ≤ upper_bound, sdf)
+    end
+end
+#Remove outliers in the training set
+train = remove_outliers_by_iqr(train, :cylindree, :consommation)
+valid = remove_outliers_by_iqr(valid, :cylindree, :consommation)
+
+# # change type break_petit to voiture_minicompacte
+# train.type = replace(train.type, "break_petit" => "voiture_minicompacte")
+# valid.type = replace(valid.type, "break_petit" => "voiture_minicompacte")
+# test.type = replace(test.type, "break_petit" => "voiture_minicompacte")
+
+
+
 
 # Define categorical columns
 categorical_cols = [:type, :transmission]
@@ -115,7 +129,42 @@ y_valid = valid[!, target]
 X_test = Matrix(test)
 
 # Define the model
-model = lm(@formula(consommation ~ annee +  + cylindree), train)
+model = lm(@formula(consommation ~ age + transmission_4x4+ transmission_integrale + transmission_propulsion + transmission_traction + boite + cylindree), train)
+
+#cross validation
+data_k_folds = vcat(train, valid)
+y = data_k_folds.consommation
+X = select(data_k_folds, Not(:consommation))
+
+n = nrow(data_k_folds)
+k = 5  
+fold_size = n ÷ k
+
+indices = randperm(n)
+
+rms_scores = []
+
+for i in 0:(k-1)
+    valid_indices = (i * fold_size + 1):((i + 1) * fold_size)
+    train_indices = setdiff(1:n, valid_indices)
+    
+    X_train = X[train_indices, :]
+    y_train = y[train_indices]
+    X_valid = X[valid_indices, :]
+    y_valid = y[valid_indices]
+    
+    model = lm(@formula(consommation ~ age + transmission_4x4+ transmission_integrale + transmission_propulsion + transmission_traction + boite + cylindree), train)
+    
+    ŷ_valid = GLM.predict(model, X_valid)
+    rms = sqrt(mean((ŷ_valid .- y_valid).^2))
+    push!(rms_scores, rms)
+end
+
+moyenne_rmse = mean(rms_scores)
+println("Moyenne RMSE k-fold : $moyenne_rmse")
+
+
+
 
 # Make predictions
 ŷ_train = GLM.predict(model, train)
