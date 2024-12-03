@@ -5,17 +5,6 @@ using GLM
 
 full_train = CSV.read("./data/raw/train.csv", DataFrame; delim=";")
 test =  CSV.read("./data/raw/test.csv", DataFrame; delim=";") #ne contient pas la varialbe consommation
-
-Random.seed!(1234) #pour la reproductibilit
-
-ntrain = round(Int, .8*nrow(full_train)) #80% des données pour l'entrainement: 80% * nb de lignes
-
-train_id = sample(1:nrow(full_train), ntrain, replace=false, ordered=true) #échantillonnage aléatoire pour l'entrainement
-valid_id = setdiff(1:nrow(full_train), train_id) #échantillon de validation. prend celles qui ne sont pas dans l'échantillon d'entrainement
-
-train = full_train[train_id, :]  
-valid = full_train[valid_id, :]
-
 function safe_parse_float(x)
     try
         return parse(Float64, x)
@@ -23,38 +12,6 @@ function safe_parse_float(x)
         return missing
     end
 end
-
-# Datasets that contain 'consommation'
-datasets_with_consommation = [train, valid]
-
-# Datasets without 'consommation'
-datasets_without_consommation = [test]
-
-# Apply replacements to 'cylindree' in all datasets
-for df in [train, valid]
-    df.cylindree = replace.(df.cylindree, "," => ".")
-end
-
-# Apply replacements to 'consommation' only in datasets that have it
-for df in datasets_with_consommation
-    df.consommation = replace.(df.consommation, "," => ".")
-end
-
-# Convert 'cylindree' to float in all datasets
-for df in [train, valid, test]
-    df.cylindree = safe_parse_float.(df.cylindree)
-end
-
-# Convert 'consommation' to float in datasets with 'consommation'
-for df in datasets_with_consommation
-    df.consommation = safe_parse_float.(df.consommation)
-end
-
-# Drop missing values in all datasets
-for df in [train, valid, test]
-    dropmissing!(df)
-end
-
 
 function one_hot_encode(df, cols, levels_dict)
     for col in cols
@@ -68,9 +25,33 @@ function one_hot_encode(df, cols, levels_dict)
     return df
 end
 
-# convert annee column into age
-train.age = 2024 .- train.annee
-valid.age = 2024 .- valid.annee
+Random.seed!(1234) #pour la reproductibilit
+
+ntrain = round(Int, .8*nrow(full_train)) #80% des données pour l'entrainement: 80% * nb de lignes
+
+train_id = sample(1:nrow(full_train), ntrain, replace=false, ordered=true) #échantillonnage aléatoire pour l'entrainement
+valid_id = setdiff(1:nrow(full_train), train_id) #échantillon de validation. prend celles qui ne sont pas dans l'échantillon d'entrainement
+
+train = full_train[train_id, :]  
+valid = full_train[valid_id, :]
+
+
+# Datasets that contain 'consommation'
+datasets_with_consommation = [train, valid]
+
+# Datasets without 'consommation'
+datasets_without_consommation = [test]
+
+# Data Cleaning and Preparation
+Random.seed!(1234) # For reproducibility
+
+# Split the data
+ntrain = round(Int, 0.8 * nrow(full_train))
+train_id = sample(1:nrow(full_train), ntrain; replace=false, ordered=true)
+valid_id = setdiff(1:nrow(full_train), train_id)
+
+train = full_train[train_id, :]
+valid = full_train[valid_id, :]
 
 # Data cleaning
 for col in [:cylindree, :consommation]
@@ -80,9 +61,8 @@ for col in [:cylindree, :consommation]
     valid[!, col] = safe_parse_float.(valid[!, col])
 end
 
-
 # Define categorical columns
-categorical_cols = [:type, :transmission, :type]
+categorical_cols = [:type, :transmission]
 
 # Collect unique levels from the training set
 levels_dict = Dict()
@@ -93,16 +73,13 @@ end
 train = one_hot_encode(train, categorical_cols, levels_dict)
 valid = one_hot_encode(valid, categorical_cols, levels_dict)
 
-#Define numeric columns
+# Define numeric columns
 numeric_cols = setdiff(names(train)[eltype.(eachcol(train)) .<: Real], [:consommation])
 
-
 # Extract numeric columns
-X_train = Matrix(select(train, Not(:consommation, )))
+X_train = Matrix(select(train, numeric_cols))
 y_train = Vector(train.consommation)
-X_valid = Matrix(select(train, Not(:consommation)))
-y_valid = Vector(valid.consommation)
-
+X_valid = Matrix(select(valid, numeric_cols))
 
 # Standardize the data
 X_mean = mean(X_train; dims=1)
@@ -126,8 +103,41 @@ model_with_pca = lm(@formula(consommation ~ PC1 + PC2 + PC3 + PC4 + PC5), train)
 
 # Predict on validation data
 valid_prediction_with_pca = predict(model_with_pca, valid)
-# test_prediction_with_pca = predict(model_with_pca, test)
 
 # Calculate RMSE
 rmse_with_pca = sqrt(mean((valid_prediction_with_pca - valid.consommation).^2))
 println("RMSE with PCA: ", rmse_with_pca)
+
+#Testing set
+# Data cleaning for the test set
+
+for col in [:cylindree]
+    test[!, col] = replace.(test[!, col], "," => ".")
+    test[!, col] = safe_parse_float.(test[!, col])
+end
+
+# One-hot encoding for the test set using levels from the training set
+test = one_hot_encode(test, categorical_cols, levels_dict)
+
+# Extract numeric columns
+numeric_cols_test = names(test)[eltype.(eachcol(test)) .<: Real]
+X_test = Matrix(select(test, numeric_cols_test))
+
+# Standardize the test data using training mean and stddev
+X_test_std = (X_test .- X_mean) ./ X_stddev
+
+# Transform test data using the PCA model
+Z_test = MultivariateStats.transform(pca_model, X_test_std')'
+
+# Add principal components to the test DataFrame
+for i in 1:size(Z_test, 2)
+    test[:, "PC$(i)"] = Z_test[:, i]
+end
+
+# Predict 'consommation' on the test set
+test_prediction_with_pca = predict(model_with_pca, test)
+
+# Add predictions to the test DataFrame
+test[:, :consommation_predite] = test_prediction_with_pca
+
+
