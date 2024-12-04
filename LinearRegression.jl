@@ -73,11 +73,6 @@ for df in datasets_with_consommation
     df.consommation = safe_parse_float.(df.consommation)
 end
 
-# Drop missing values in all datasets
-for df in [train, valid, test]
-    dropmissing!(df)
-end
-
 # Encode 'boite' column in all datasets
 for df in [train, valid, test]
     df.boite = ifelse.(df.boite .== "automatique", 1.0, 0.0)
@@ -97,10 +92,6 @@ end
 train = remove_outliers_by_iqr(train, :cylindree, :consommation)
 valid = remove_outliers_by_iqr(valid, :cylindree, :consommation)
 
-# # change type break_petit to voiture_minicompacte
-# train.type = replace(train.type, "break_petit" => "voiture_minicompacte")
-# valid.type = replace(valid.type, "break_petit" => "voiture_minicompacte")
-# test.type = replace(test.type, "break_petit" => "voiture_minicompacte")
 
 # if transmission is 4x4, change for integrale
 train.transmission = ifelse.(train.transmission .== "4x4", "integrale", train.transmission)
@@ -116,10 +107,30 @@ for col in categorical_cols
     levels_dict[col] = unique(train[!, col])
 end
 
+# apply log transformation to the cylindree
+train.cylindree = log.(train.cylindree)
+valid.cylindree = log.(valid.cylindree)
+test.cylindree = log.(test.cylindree)
+
+# #standardize the data
+# function standardize(df)
+#     for col in names(df)
+#         if eltype(df[!, col]) <: Number
+#             df[!, col] = (df[!, col] .- mean(df[!, col])) ./ std(df[!, col])
+#         end
+#     end
+#     return df
+# end
+
+# numeric_cols = [:age, :cylindree]
+
+# train[!, numeric_cols] = standardize(train[!, numeric_cols])
+# valid[!, numeric_cols] = standardize(valid[!, numeric_cols])
+# test[!, numeric_cols] = standardize(test[!, numeric_cols])
+
 train = one_hot_encode(train, categorical_cols, levels_dict)
 valid = one_hot_encode(valid, categorical_cols, levels_dict)
 test = one_hot_encode(test, categorical_cols, levels_dict)
-
 
 # Define the target variable
 target = :consommation
@@ -175,6 +186,11 @@ ŷ_valid = GLM.predict(model, valid)
 # Compute the RMSE
 rmse_train = sqrt(mean((ŷ_train .- train.consommation).^2))
 rmse_valid = sqrt(mean((ŷ_valid .- valid.consommation).^2))
+
+#plot dirstribtuion of residuals
+residuals = ŷ_valid .- valid.consommation
+histogram(residuals, bins=50, title="Distribution of residuals", xlabel="Residuals", ylabel="Frequency")
+
 
 println("RMSE on the training set: $rmse_train")
 println("RMSE on the validation set: $rmse_valid")
