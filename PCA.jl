@@ -78,14 +78,42 @@ for df in [train, valid, test]
     dropmissing!(df)
 end
 
+# Encode 'boite' column in all datasets
+for df in [train, valid, test]
+    df.boite = ifelse.(df.boite .== "automatique", 1.0, 0.0)
+end
+
+#drop type
+train = select!(train, Not(:type))
+valid = select!(valid, Not(:type))
+test = select!(test, Not(:type))
+
 # Define categorical columns
-categorical_cols = [:type, :transmission, :boite]
+categorical_cols = [ :transmission]
 
 # Collect unique levels from the training set
 levels_dict = Dict()
 for col in categorical_cols
     levels_dict[col] = unique(train[!, col])
 end
+
+function remove_outliers_by_iqr(df, group_col, value_col)
+    return combine(groupby(df, group_col)) do sdf
+        q1 = quantile(sdf[!, value_col], 0.25)
+        q3 = quantile(sdf[!, value_col], 0.75)
+        iqr = q3 - q1
+        lower_bound = q1 - 1.5 * iqr
+        upper_bound = q3 + 1.5 * iqr
+        filter(row -> lower_bound ≤ row[value_col] ≤ upper_bound, sdf)
+    end
+end
+#Remove outliers in the training set
+train = remove_outliers_by_iqr(train, :cylindree, :consommation)
+valid = remove_outliers_by_iqr(valid, :cylindree, :consommation)
+
+train.transmission = ifelse.(train.transmission .== "propulsion", "integrale", train.transmission)
+valid.transmission = ifelse.(valid.transmission .== "propulsion", "integrale", valid.transmission)
+test.transmission = ifelse.(test.transmission .== "propulsion", "integrale", test.transmission)
 
 train = one_hot_encode(train, categorical_cols, levels_dict)
 valid = one_hot_encode(valid, categorical_cols, levels_dict)
@@ -97,28 +125,9 @@ y_valid = valid.consommation
 X_valid = select(valid, Not(:consommation))
 X_test = deepcopy(test)
 
-
-# Identify numeric feature indices
-feature_names = names(train)
-numeric_features = [ :cylindree, :nombre_cylindres, :age]
-numeric_indices = findall(x -> x in numeric_features, feature_names)
-
-means = mean(Matrix(X_train[:, numeric_features]), dims=1)
-stds = std(Matrix(X_train[:, numeric_features]), dims=1)
-
-function standardizer(X, means, stds)
-    X = deepcopy(X)
-    for j in 1:size(X, 2)
-        if j in numeric_indices
-            X[:, j] = (X[:, j] .- means[j]) ./ stds[j]
-        end
-    end
-    return X
-end
-
-X_train = standardizer(Matrix(X_train), means, stds)
-X_valid = standardizer(Matrix(X_valid), means, stds)
-X_test = standardizer(Matrix(X_test), means, stds)
+X_train = Matrix(select(train, Not(:consommation)))
+X_valid = Matrix(select(valid, Not(:consommation)))
+X_test = Matrix(test)
 
 y_train = Vector(y_train)
 y_valid = Vector(y_valid)
@@ -127,11 +136,13 @@ y_valid = Vector(y_valid)
 pca_model = fit(PCA, X_train'; maxoutdim=5)
 Z_train = MultivariateStats.transform(pca_model, X_train')'
 Z_valid = MultivariateStats.transform(pca_model, X_valid')'
+Z_test = MultivariateStats.transform(pca_model, X_test')'
 
 # Add principal components to DataFrames (train and valid)
 for i in 1:size(Z_train, 2)
     train[:, "PC$(i)"] = Z_train[:, i]
     valid[:, "PC$(i)"] = Z_valid[:, i]
+    test[:, "PC$(i)"] = Z_test[:, i]
 end
 
 # Fit a regression model using PCA
@@ -144,3 +155,49 @@ valid_prediction_with_pca = predict(model_with_pca, valid)
 rmse_with_pca = sqrt(mean((valid_prediction_with_pca - valid.consommation).^2))
 println("RMSE with PCA: ", rmse_with_pca)
 
+#k fold cross validation
+data_k_folds = vcat(train, valid)
+y = data_k_folds.consommation
+X = select(data_k_folds, Not(:consommation))
+
+n = nrow(data_k_folds)
+k = 5
+fold_size = n ÷ k
+
+indices = randperm(n)
+
+rms_scores = []
+
+for i in 0:(k-1)
+    valid_indices = (i * fold_size + 1):((i + 1) * fold_size)
+    train_indices = setdiff(1:n, valid_indices)
+    
+    X_train = X[train_indices, :]
+    y_train = y[train_indices]
+    X_valid = X[valid_indices, :]
+    y_valid = y[valid_indices]
+    
+    model = lm(@formula(consommation ~ PC1 + PC2 + PC3 + PC4 + PC5), train)
+    
+    ŷ_valid = GLM.predict(model, X_valid)
+    rms = sqrt(mean((ŷ_valid .- y_valid).^2))
+    push!(rms_scores, rms)
+end
+
+moyenne_rmse = mean(rms_scores)
+println("Moyenne RMSE k-fold : $moyenne_rmse")
+
+# Prepare submission DataFrame
+
+# Make predictions on the test set
+ŷ_test = GLM.predict(model_with_pca, test)
+
+#  Prepare submission DataFrame
+n_test = size(ŷ_test, 1)
+id = 1:n_test
+df_pred = DataFrame(id=id, consommation=ŷ_test)
+
+# Save the predictions to a CSV file
+name = string(rmse_with_pca) * ".csv"
+CSV.write("./submissions/pca/" * name, df_pred)
+println("Predictions exported successfully to " * name * ".")
