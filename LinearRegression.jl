@@ -94,12 +94,44 @@ valid = remove_outliers_by_iqr(valid, :cylindree, :consommation)
 
 
 # if transmission is 4x4, change for integrale
-train.transmission = ifelse.(train.transmission .== "4x4", "integrale", train.transmission)
-valid.transmission = ifelse.(valid.transmission .== "4x4", "integrale", valid.transmission)
-test.transmission = ifelse.(test.transmission .== "4x4", "integrale", test.transmission)
+# train.transmission = ifelse.(train.transmission .== "4x4", "integrale", train.transmission)
+# valid.transmission = ifelse.(valid.transmission .== "4x4", "integrale", valid.transmission)
+# test.transmission = ifelse.(test.transmission .== "4x4", "integrale", test.transmission)
+function categorize_transmission(transmission)
+    if transmission in ["integrale", "4x4", "propulsion"]
+        return "AWDRWD"
+    else
+        return "traction"
+    end
+end
+
+function categorize_vehicle_type(vehicle_type)
+    if vehicle_type in ["break_petit", "voiture_minicompacte", "voiture_compacte", "VUS_petit", "voiture_moyenne"]
+        return "petits_véhicules"
+    elseif vehicle_type in ["voiture_sous_compacte", "break_moyen", "monospace", "camionnette_petit"]
+        return "véhicules_moyens"
+    else
+        return "grands_véhicules"
+    end
+end
+
+
+
+train[:, :categorie_transmission] = [categorize_transmission(t) for t in train[:, :transmission]]
+valid[:, :categorie_transmission] = [categorize_transmission(t) for t in valid[:, :transmission]]
+test[:, :categorie_transmission] = [categorize_transmission(t) for t in test[:, :transmission]]
+
+train[:, :categorie_vehicule] = [categorize_vehicle_type(t) for t in train[:, :type]]
+valid[:, :categorie_vehicule] = [categorize_vehicle_type(t) for t in valid[:, :type]]
+test[:, :categorie_vehicule] = [categorize_vehicle_type(t) for t in test[:, :type]]
+
+
+train = select!(train, Not(:transmission, :type))
+valid = select!(valid, Not(:transmission, :type))
+test = select!(test, Not(:transmission, :type))
 
 # Define categorical columns
-categorical_cols = [:type, :transmission]
+categorical_cols = [:categorie_vehicule, :categorie_transmission]
 
 # Collect unique levels from the training set
 levels_dict = Dict()
@@ -144,7 +176,7 @@ X_test = Matrix(test)
 
 # Define the model
 # model = lm(@formula(consommation ~ age + transmission_4x4+ transmission_integrale + transmission_propulsion + transmission_traction + boite + cylindree), train)
-model = lm(@formula(consommation ~ age + transmission_integrale + transmission_propulsion + transmission_traction + boite + cylindree), train) #Meilleur
+model = lm(@formula(consommation ~ age + categorie_transmission_AWDRWD + categorie_transmission_traction + categorie_vehicule_petits_véhicules + categorie_vehicule_grands_véhicules + categorie_vehicule_véhicules_moyens + boite + cylindree), train) #Meilleur
 # model = lm(@formula(consommation ~ age +  transmission_integrale + transmission_4x4 + transmission_traction + boite + cylindree), train)
 
 #cross validation
@@ -169,7 +201,7 @@ for i in 0:(k-1)
     X_valid = X[valid_indices, :]
     y_valid = y[valid_indices]
     
-model = lm(@formula(consommation ~ age + transmission_integrale + transmission_propulsion + transmission_traction + boite + cylindree), train) #Meilleur
+model = lm(@formula(consommation ~ age +categorie_transmission_AWDRWD + categorie_transmission_traction + categorie_vehicule_petits_véhicules + categorie_vehicule_grands_véhicules + categorie_vehicule_véhicules_moyens + boite + cylindree), train) #Meilleur
     
     ŷ_valid = GLM.predict(model, X_valid)
     rms = sqrt(mean((ŷ_valid .- y_valid).^2))
