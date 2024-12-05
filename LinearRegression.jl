@@ -78,19 +78,19 @@ for df in [train, valid, test]
     df.boite = ifelse.(df.boite .== "automatique", 1.0, 0.0)
 end
 
-function remove_outliers_by_iqr(df, group_col, value_col)
-    return combine(groupby(df, group_col)) do sdf
-        q1 = quantile(sdf[!, value_col], 0.25)
-        q3 = quantile(sdf[!, value_col], 0.75)
-        iqr = q3 - q1
-        lower_bound = q1 - 1.5 * iqr
-        upper_bound = q3 + 1.5 * iqr
-        filter(row -> lower_bound ≤ row[value_col] ≤ upper_bound, sdf)
-    end
-end
-#Remove outliers in the training set
-train = remove_outliers_by_iqr(train, :cylindree, :consommation)
-valid = remove_outliers_by_iqr(valid, :cylindree, :consommation)
+# function remove_outliers_by_iqr(df, group_col, value_col)
+#     return combine(groupby(df, group_col)) do sdf
+#         q1 = quantile(sdf[!, value_col], 0.25)
+#         q3 = quantile(sdf[!, value_col], 0.75)
+#         iqr = q3 - q1
+#         lower_bound = q1 - 1.5 * iqr
+#         upper_bound = q3 + 1.5 * iqr
+#         filter(row -> lower_bound ≤ row[value_col] ≤ upper_bound, sdf)
+#     end
+# end
+# #Remove outliers in the training set
+# train = remove_outliers_by_iqr(train, :cylindree, :consommation)
+# valid = remove_outliers_by_iqr(valid, :cylindree, :consommation)
 
 
 # if transmission is 4x4, change for integrale
