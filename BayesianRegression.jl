@@ -33,14 +33,14 @@ function one_hot_encode(df, cols, levels_dict)
     return df
 end
 
-## convert annee column into age
-train.age = 2024 .- train.annee
-valid.age = 2024 .- valid.annee
-test.age = 2024 .- test.annee
+# # ## convert annee column into age
+# train.age = 2024 .- train.annee
+# valid.age = 2024 .- valid.annee
+# test.age = 2024 .- test.annee
 
-train = select!(train, Not(:annee))
-valid = select!(valid, Not(:annee))
-test = select!(test, Not(:annee))
+# train = select!(train, Not(:annee))
+# valid = select!(valid, Not(:annee))
+# test = select!(test, Not(:annee))
 
 ## drop missing values
 train = dropmissing(train)
@@ -83,23 +83,73 @@ for df in [train, valid, test]
     df.boite = ifelse.(df.boite .== "automatique", 1.0, 0.0)
 end
 
-function remove_outliers_by_iqr(df, group_col, value_col)
-    return combine(groupby(df, group_col)) do sdf
-        q1 = quantile(sdf[!, value_col], 0.25)
-        q3 = quantile(sdf[!, value_col], 0.75)
-        iqr = q3 - q1
-        lower_bound = q1 - 1.5 * iqr
-        upper_bound = q3 + 1.5 * iqr
-        filter(row -> lower_bound ≤ row[value_col] ≤ upper_bound, sdf)
-    end
+function compute_bic(X, y)
+    # Ajuster un modèle
+    beta = (X' * X) \ (X' * y)
+    residuals = y - X * beta
+    ssr = sum(residuals .^ 2) # Résidu de somme des carrés
+    n = size(X, 1) # Nombre d'échantillons
+    p = size(X, 2) # Nombre de variables explicatives
+    bic = n * log(ssr / n) + p * log(n) # Calcul du BIC
+    return bic
 end
-#Remove outliers in the training set
-train = remove_outliers_by_iqr(train, :cylindree, :consommation)
-valid = remove_outliers_by_iqr(valid, :cylindree, :consommation)
 
-train.transmission = ifelse.(train.transmission .== "porpulsion", "integrale", train.transmission)
-valid.transmission = ifelse.(valid.transmission .== "porpulsion", "integrale", valid.transmission)
-test.transmission = ifelse.(test.transmission .== "porpulsion", "integrale", test.transmission)
+function gibbs_sampling(X, y, N)
+    p = size(X, 2) # Nombre total de variables explicatives
+    γ = ones(Int, p) # Initialisation : inclure toutes les variables
+    best_model = deepcopy(γ)
+    best_bic = Inf
+
+    for t in 1:N
+        for i in 1:p
+            γ_temp = deepcopy(γ)
+
+            # Option 1: Inclure la variable
+            γ_temp[i] = 1
+            X_included = X[:, γ_temp .== 1]
+            bic_included = compute_bic(X_included, y)
+
+            # Option 2: Exclure la variable
+            γ_temp[i] = 0
+            X_excluded = X[:, γ_temp .== 1]
+            bic_excluded = compute_bic(X_excluded, y)
+
+            # Calculer θ_i
+            θ_i = exp(-bic_included) / (exp(-bic_included) + exp(-bic_excluded))
+
+            # Tirer γ_i de Bernoulli(θ_i)
+            γ[i] = rand() < θ_i ? 1 : 0
+        end
+
+        # Calculer le BIC pour le modèle courant
+        X_current = X[:, γ .== 1]
+        bic_current = compute_bic(X_current, y)
+
+        # Mettre à jour le meilleur modèle
+        if bic_current < best_bic
+            best_bic = bic_current
+            best_model = deepcopy(γ)
+        end
+    end
+
+    return best_model, best_bic
+end
+
+
+# function remove_outliers_by_iqr(df, group_col, value_col)
+#     return combine(groupby(df, group_col)) do sdf
+#         q1 = quantile(sdf[!, value_col], 0.25)
+#         q3 = quantile(sdf[!, value_col], 0.75)
+#         iqr = q3 - q1
+#         lower_bound = q1 - 1.5 * iqr
+#         upper_bound = q3 + 1.5 * iqr
+#         filter(row -> lower_bound ≤ row[value_col] ≤ upper_bound, sdf)
+#     end
+# end
+
+# #Remove outliers in the training set
+# train = remove_outliers_by_iqr(train, :cylindree, :consommation)
+# valid = remove_outliers_by_iqr(valid, :cylindree, :consommation)
 
 # Define categorical columns
 categorical_cols = [:type, :transmission]
@@ -114,16 +164,17 @@ train = one_hot_encode(train, categorical_cols, levels_dict)
 valid = one_hot_encode(valid, categorical_cols, levels_dict)
 test = one_hot_encode(test, categorical_cols, levels_dict)
 
-y_train = train.consommation
+# # Log-transform the target variable
+# y_train = log.(train.consommation)
+# y_valid = log.(valid.consommation)
+
 X_train = select(train, Not(:consommation))
-y_valid = valid.consommation
 X_valid = select(valid, Not(:consommation))
 X_test = deepcopy(test)
 
-
 # Identify numeric feature indices
 feature_names = names(train)
-numeric_features = [ :cylindree, :nombre_cylindres, :age]
+numeric_features = [ :cylindree, :nombre_cylindres, :annee]
 numeric_indices = findall(x -> x in numeric_features, feature_names)
 
 means = mean(Matrix(X_train[:, numeric_features]), dims=1)
@@ -143,8 +194,8 @@ X_train = standardizer(Matrix(X_train), means, stds)
 X_valid = standardizer(Matrix(X_valid), means, stds)
 X_test = standardizer(Matrix(X_test), means, stds)
 
-y_train = Vector(y_train)
-y_valid = Vector(y_valid)
+y_train = Vector(train.consommation)
+y_valid = Vector(valid.consommation)
 
 # Ridge regression with cross-validation
 XtX = X_train' * X_train
@@ -157,7 +208,7 @@ best_lambda = 0.0
 best_beta = nothing
 
 for λ in lambda_values
-    beta = (XtX + λ * I) \ Xty
+    local beta = (XtX + λ * I) \ Xty  # Ensure beta is local
     y_pred_valid = X_valid * beta
     rmse = sqrt(mean((y_pred_valid - y_valid).^2))
     global best_rmse, best_lambda, best_beta
@@ -171,20 +222,16 @@ end
 println("Best Lambda: ", best_lambda)
 println("Best RMSE: ", best_rmse)
 
-# Evaluation on validation set
 y_valid_pred = X_valid * best_beta
 rmse_valid = sqrt(mean((y_valid_pred - y_valid).^2))
 println("Validation RMSE: ", rmse_valid)
 
-# cross validation 
-# Prepare DataFrame for cross-validation
 n_folds = 5
 n_samples = size(X_train, 1)
 fold_size = n_samples ÷ n_folds
 folds = repeat(1:n_folds, inner=fold_size)
 shuffle!(folds)
 
-# Cross-validation
 rmse_values = []
 for λ in lambda_values
     rmse = 0.0
@@ -214,21 +261,35 @@ beta = (X_train' * X_train + best_lambda * I) \ (X_train' * y_train)
 
 # Evaluate on validation set
 y_valid_pred = X_valid * beta
+y_train_pred = X_train * beta
 rmse_valid = sqrt(mean((y_valid_pred - y_valid).^2))
+rmse_train = sqrt(mean((y_train_pred - y_train).^2))
 println("Validation RMSE: ", rmse_valid)
+println("Train RMSE: ", rmse_train)
 
+best_model = gibbs_sampling(X_train, y_train, 2000)
+println(best_model)
 
+# Make prediction on validation set with best model
+X_valid_best = X_valid[:, best_model[1] .== 1]
 
+beta_best = (X_valid_best' * X_valid_best) \ (X_valid_best' * y_valid)
+y_valid_pred_best = exp.(X_valid_best * beta_best)
+rmse_valid_best = sqrt(mean((y_valid_pred_best - valid.consommation).^2))
+println("Validation RMSE with best model: ", rmse_valid_best)
 
+# # Make prediction on test set with best model
+# X_test_best = X_test[:, best_model[1] .== 1]
+# y_test_pred_best = exp.(X_test_best * beta_best)
 
-# # Predictions on test set
-# y_test_pred = X_test * best_beta
-
-# # Prepare submission DataFrame
-# n_test = size(y_test_pred, 1)
+# #  Prepare submission DataFrame
+# n_test = size(y_test_pred_best, 1)
 # id = 1:n_test
-# df_pred = DataFrame(id=id, consommation=y_test_pred)
+# df_pred = DataFrame(id=id, consommation=y_test_pred_best)
 
-# name = "ridge" * string(rmse_valid) * ".csv"
-# CSV.write("../submissions/" * name, df_pred)
+# # Save the predictions to a CSV file
+# name = string(rmse_valid_best) * '1' * ".csv"
+# CSV.write("./submissions/bayes/" * name, df_pred)
 # println("Predictions exported successfully to " * name * ".")
+
+

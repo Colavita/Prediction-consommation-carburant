@@ -115,8 +115,6 @@ function categorize_vehicle_type(vehicle_type)
     end
 end
 
-
-
 train[:, :categorie_transmission] = [categorize_transmission(t) for t in train[:, :transmission]]
 valid[:, :categorie_transmission] = [categorize_transmission(t) for t in valid[:, :transmission]]
 test[:, :categorie_transmission] = [categorize_transmission(t) for t in test[:, :transmission]]
@@ -124,7 +122,6 @@ test[:, :categorie_transmission] = [categorize_transmission(t) for t in test[:, 
 train[:, :categorie_vehicule] = [categorize_vehicle_type(t) for t in train[:, :type]]
 valid[:, :categorie_vehicule] = [categorize_vehicle_type(t) for t in valid[:, :type]]
 test[:, :categorie_vehicule] = [categorize_vehicle_type(t) for t in test[:, :type]]
-
 
 train = select!(train, Not(:transmission, :type))
 valid = select!(valid, Not(:transmission, :type))
@@ -143,6 +140,11 @@ end
 train.cylindree = log.(train.cylindree)
 valid.cylindree = log.(valid.cylindree)
 test.cylindree = log.(test.cylindree)
+
+# train.nombre_cylindres = log.(train.nombre_cylindres)
+# valid.nombre_cylindres = log.(valid.nombre_cylindres)
+# test.nombre_cylindres = log.(test.nombre_cylindres)
+
 
 # #standardize the data
 # function standardize(df)
@@ -176,7 +178,8 @@ X_test = Matrix(test)
 
 # Define the model
 # model = lm(@formula(consommation ~ age + transmission_4x4+ transmission_integrale + transmission_propulsion + transmission_traction + boite + cylindree), train)
-model = lm(@formula(consommation ~ age + categorie_transmission_AWDRWD + categorie_transmission_traction + categorie_vehicule_petits_véhicules + categorie_vehicule_grands_véhicules + categorie_vehicule_véhicules_moyens + boite + cylindree), train) #Meilleur
+ model = lm(@formula(consommation ~ age + categorie_transmission_AWDRWD + categorie_transmission_traction + categorie_vehicule_petits_véhicules + categorie_vehicule_grands_véhicules + categorie_vehicule_véhicules_moyens + boite + cylindree), train) #Meilleur
+# model = lm(@formula(consommation ~ age + categorie_transmission_AWDRWD + categorie_transmission_traction + categorie_vehicule_petits_véhicules + categorie_vehicule_grands_véhicules + categorie_vehicule_véhicules_moyens + boite + nombre_cylindres), train)
 # model = lm(@formula(consommation ~ age +  transmission_integrale + transmission_4x4 + transmission_traction + boite + cylindree), train)
 
 #cross validation
@@ -185,7 +188,7 @@ y = data_k_folds.consommation
 X = select(data_k_folds, Not(:consommation))
 
 n = nrow(data_k_folds)
-k = 5
+k = 10
 fold_size = n ÷ k
 
 indices = randperm(n)
@@ -200,8 +203,8 @@ for i in 0:(k-1)
     y_train = y[train_indices]
     X_valid = X[valid_indices, :]
     y_valid = y[valid_indices]
-    
-model = lm(@formula(consommation ~ age +categorie_transmission_AWDRWD + categorie_transmission_traction + categorie_vehicule_petits_véhicules + categorie_vehicule_grands_véhicules + categorie_vehicule_véhicules_moyens + boite + cylindree), train) #Meilleur
+
+model = lm(@formula(consommation ~ age +categorie_transmission_AWDRWD + categorie_transmission_traction + categorie_vehicule_petits_véhicules + categorie_vehicule_grands_véhicules + categorie_vehicule_véhicules_moyens + boite + cylindree), data_k_folds) #Meilleur
     
     ŷ_valid = GLM.predict(model, X_valid)
     rms = sqrt(mean((ŷ_valid .- y_valid).^2))
