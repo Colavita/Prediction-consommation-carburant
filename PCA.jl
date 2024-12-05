@@ -33,15 +33,6 @@ function one_hot_encode(df, cols, levels_dict)
     return df
 end
 
-## convert annee column into age
-train.age = 2024 .- train.annee
-valid.age = 2024 .- valid.annee
-test.age = 2024 .- test.annee
-
-train = select!(train, Not(:annee))
-valid = select!(valid, Not(:annee))
-test = select!(test, Not(:annee))
-
 ## drop missing values
 train = dropmissing(train)
 valid = dropmissing(valid)
@@ -73,29 +64,12 @@ for df in datasets_with_consommation
     df.consommation = safe_parse_float.(df.consommation)
 end
 
-# Drop missing values in all datasets
-for df in [train, valid, test]
-    dropmissing!(df)
-end
-
 # Encode 'boite' column in all datasets
 for df in [train, valid, test]
     df.boite = ifelse.(df.boite .== "automatique", 1.0, 0.0)
 end
 
-#drop type
-train = select!(train, Not(:type))
-valid = select!(valid, Not(:type))
-test = select!(test, Not(:type))
-
 # Define categorical columns
-categorical_cols = [ :transmission]
-
-# Collect unique levels from the training set
-levels_dict = Dict()
-for col in categorical_cols
-    levels_dict[col] = unique(train[!, col])
-end
 
 function remove_outliers_by_iqr(df, group_col, value_col)
     return combine(groupby(df, group_col)) do sdf
@@ -111,13 +85,29 @@ end
 train = remove_outliers_by_iqr(train, :cylindree, :consommation)
 valid = remove_outliers_by_iqr(valid, :cylindree, :consommation)
 
-train.transmission = ifelse.(train.transmission .== "propulsion", "integrale", train.transmission)
-valid.transmission = ifelse.(valid.transmission .== "propulsion", "integrale", valid.transmission)
-test.transmission = ifelse.(test.transmission .== "propulsion", "integrale", test.transmission)
+# if transmission is 4x4, change for integrale
+# train.transmission = ifelse.(train.transmission .== "4x4", "integrale", train.transmission)
+# valid.transmission = ifelse.(valid.transmission .== "4x4", "integrale", valid.transmission)
+# test.transmission = ifelse.(test.transmission .== "4x4", "integrale", test.transmission)
+
+# train.transmission = ifelse.(train.transmission .== "propulsion", "integrale", train.transmission)
+# valid.transmission = ifelse.(valid.transmission .== "propulsion", "integrale", valid.transmission)
+# test.transmission = ifelse.(test.transmission .== "propulsion", "integrale", test.transmission)
+
+
+categorical_cols = [:type, :transmission]
+
+# Collect unique levels from the training set
+levels_dict = Dict()
+for col in categorical_cols
+    levels_dict[col] = unique(train[!, col])
+end
+
 
 train = one_hot_encode(train, categorical_cols, levels_dict)
 valid = one_hot_encode(valid, categorical_cols, levels_dict)
 test = one_hot_encode(test, categorical_cols, levels_dict)
+
 
 y_train = train.consommation
 X_train = select(train, Not(:consommation))
@@ -133,6 +123,8 @@ y_train = Vector(y_train)
 y_valid = Vector(y_valid)
 
 # Perform PCA
+
+
 pca_model = fit(PCA, X_train'; maxoutdim=5)
 Z_train = MultivariateStats.transform(pca_model, X_train')'
 Z_valid = MultivariateStats.transform(pca_model, X_valid')'
